@@ -13,13 +13,14 @@ from torch.optim import Adam
 
 from ignite.engine import Events, create_supervised_trainer, create_supervised_evaluator
 from ignite.metrics import Accuracy, Loss
+from fa_linear import *
 
 def get_data(data_type):
     mat = scipy.io.loadmat('mnist_all.mat')
     X=torch.zeros((0, 28 * 28), dtype=torch.float)
     y=torch.zeros(0, dtype=torch.long)
     for i in range(10): 
-        X_i = torch.from_numpy(mat[data_type + str(i)].astype(np.float)).float()
+        X_i = torch.from_numpy(mat[data_type + str(i)].astype(float)).float()
         X = torch.cat((X, X_i))
         y_i = torch.full(size=(len(X_i),), fill_value=i, dtype=torch.long)
         y = torch.cat((y, y_i))
@@ -72,6 +73,7 @@ def get_unsupervised_weights(X, n_hidden, n_epochs, batch_size,
     return weights
 
 def run_test(train_X, train_y, test_X, test_y, model, epochs, batch_size=64, lr=1e-3, verbose=0, loss=None):
+    print("hello")
     start = time()
     train_ds = TensorDataset(train_X, train_y)
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
@@ -90,7 +92,7 @@ def run_test(train_X, train_y, test_X, test_y, model, epochs, batch_size=64, lr=
         metrics = evaluator.state.metrics
         avg_accuracy = metrics['accuracy']
         avg_nll = metrics['nll']
-        print("Training Results - Epoch: {}  Avg accuracy: {:.2f} Avg loss: {:.2f}".format(engine.state.epoch, avg_accuracy, avg_nll))
+        print("Training Results - Epoch: {}  Avg accuracy: {:.4f} Avg loss: {:.2f}".format(engine.state.epoch, avg_accuracy, avg_nll))
 
     @trainer.on(Events.EPOCH_COMPLETED)
     def log_validation_results(engine):
@@ -99,7 +101,7 @@ def run_test(train_X, train_y, test_X, test_y, model, epochs, batch_size=64, lr=
         metrics = evaluator.state.metrics
         avg_accuracy = metrics['accuracy']
         avg_nll = metrics['nll']
-        print("Validation Results - Epoch: {}  Avg accuracy: {:.2f} Avg loss: {:.2f}".format(engine.state.epoch, avg_accuracy, avg_nll))
+        print("Validation Results - Epoch: {}  Avg accuracy: {:.4f} Avg loss: {:.2f}".format(engine.state.epoch, avg_accuracy, avg_nll))
 
     @trainer.on(Events.COMPLETED)
     def log_completed_validation_results(engine):
@@ -107,9 +109,10 @@ def run_test(train_X, train_y, test_X, test_y, model, epochs, batch_size=64, lr=
         metrics = evaluator.state.metrics
         avg_accuracy = metrics['accuracy']
         avg_nll = metrics['nll']
-        print("Final Validation Results - Epoch: {}  Avg accuracy: {:.2f} Avg loss: {:.2f} Took: {:.0f}s".format(engine.state.epoch, avg_accuracy, avg_nll, time() - start))
+        print("Final Validation Results - Epoch: {}  Avg accuracy: {:.4f} Avg loss: {:.2f} Took: {:.0f}s".format(engine.state.epoch, avg_accuracy, avg_nll, time() - start))
 
     trainer.run(train_dl, max_epochs=epochs) 
+   
 
 class SimpleConvNet(nn.Module):
     def __init__(self):
@@ -164,10 +167,17 @@ class BioCell3(nn.Module):
     def __init__(self, Wᵤᵢ, n=4.5, β=.01, out_features=10):
         super().__init__()
         self.Wᵤᵢ = Wᵤᵢ.transpose(0, 1) # (768, 2000)
+        
+        # Assuming Wᵤᵢ is a parameter of a model and needs to be frozen
+        self.Wᵤᵢ.requires_grad = False
+
         self.n = n
         self.β = β
         # self.Sₐᵤ = nn.Parameter(torch.Tensor(Wᵤᵢ.size(0), out_features))
-        self.Sₐᵤ = nn.Linear(Wᵤᵢ.size(0), out_features, bias=False)
+        
+        # original
+        #self.Sₐᵤ = nn.Linear(Wᵤᵢ.size(0), out_features, bias=False)
+        self.Sₐᵤ = LinearFAModule(Wᵤᵢ.size(0), out_features,bias=False) # append bias term 
         
     def forward(self, vᵢ):
         # vᵢ = vᵢ.view(-1, 28, 28).transpose(1, 2).contiguous().view(-1, 28*28) # change vᵢ to be HxW for testing
@@ -242,6 +252,8 @@ class BioConvClassifier2(nn.Module):
         self.conv2_drop = nn.Dropout2d()
         self.fc1 = nn.Linear(256, 1024)
         self.fc2 = nn.Linear(1024, 10)
+        # self.fc1 = LinearFAModule(256, 1024)
+        # self.fc2 = LinearFAModule(1024, 10)
 
     def forward(self, x): # 64, 784
         x = self.conv1(x) # 64, 2000, 1, 1
@@ -252,4 +264,10 @@ class BioConvClassifier2(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.dropout(x, training=self.training)
         x = self.fc2(x)
+        
+        # Use the custom LinearFAModule for forward pass
+        # x = F.relu(self.fc1(x))
+        # x = F.dropout(x, training=self.training)
+        # x = self.fc2(x)
         return F.log_softmax(x, dim=-1)
+
