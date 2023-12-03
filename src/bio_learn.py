@@ -162,7 +162,7 @@ class BioCell2(nn.Module):
         cₐ = torch.tanh(self.β * Sₐᵤ)
         return cₐ
 
-class BioCell3(nn.Module):
+class BioCell3_withFA(nn.Module):
     # Wᵤᵢ is the unsupervised pretrained weight matrix of shape: (2000, 28*28)
     def __init__(self, Wᵤᵢ, n=4.5, β=.01, out_features=10):
         super().__init__()
@@ -187,6 +187,31 @@ class BioCell3(nn.Module):
         cₐ = torch.tanh(self.β * Sₐᵤhᵤ)
         return cₐ
 
+class BioCell3_withoutFA(nn.Module):
+    # Wᵤᵢ is the unsupervised pretrained weight matrix of shape: (2000, 28*28)
+    def __init__(self, Wᵤᵢ, n=4.5, β=.01, out_features=10):
+        super().__init__()
+        self.Wᵤᵢ = Wᵤᵢ.transpose(0, 1) # (768, 2000)
+        
+        # Assuming Wᵤᵢ is a parameter of a model and needs to be frozen
+        self.Wᵤᵢ.requires_grad = False
+
+        self.n = n
+        self.β = β
+        # self.Sₐᵤ = nn.Parameter(torch.Tensor(Wᵤᵢ.size(0), out_features))
+        
+        # original
+        self.Sₐᵤ = nn.Linear(Wᵤᵢ.size(0), out_features, bias=False)
+        #self.Sₐᵤ = LinearFAModule(Wᵤᵢ.size(0), out_features,bias=False) # append bias term 
+        
+    def forward(self, vᵢ):
+        # vᵢ = vᵢ.view(-1, 28, 28).transpose(1, 2).contiguous().view(-1, 28*28) # change vᵢ to be HxW for testing
+        Wᵤᵢvᵢ = torch.matmul(vᵢ, self.Wᵤᵢ)
+        hᵤ = F.relu(Wᵤᵢvᵢ) ** self.n
+        Sₐᵤhᵤ = self.Sₐᵤ(hᵤ)
+        cₐ = torch.tanh(self.β * Sₐᵤhᵤ)
+        return cₐ
+    
 class BioLoss(nn.Module):
     def __init__(self, m=6):
         super().__init__()
@@ -244,22 +269,24 @@ class BioConvClassifier(nn.Module):
         return x
         
 
+# bio + FCN classifier - FCN with feedback alignment
 class BioConvClassifier2(nn.Module):
     def __init__(self, Wᵤᵢ):
         super().__init__()
         self.conv1 = BioConvLayer(Wᵤᵢ)
-        self.conv2 = nn.Conv2d(2000, 256, 1)
+        self.fc0 = LinearFAModule(2000, 256, bias=False)
+        #self.conv2 = nn.Conv2d(2000, 256, 1)
         self.conv2_drop = nn.Dropout2d()
-        self.fc1 = nn.Linear(256, 1024)
-        self.fc2 = nn.Linear(1024, 10)
-        # self.fc1 = LinearFAModule(256, 1024)
-        # self.fc2 = LinearFAModule(1024, 10)
+        # self.fc1 = nn.Linear(256, 1024)
+        # self.fc2 = nn.Linear(1024, 10)
+        self.fc1 = LinearFAModule(256, 1024, bias=False)
+        self.fc2 = LinearFAModule(1024, 10, bias=False)
 
     def forward(self, x): # 64, 784
         x = self.conv1(x) # 64, 2000, 1, 1
-        x = F.relu(F.max_pool2d(x, 2)) # 64, 2000, 1, 1
-        x = self.conv2(x) # 64, 256, 1, 1
-        x = F.relu(F.max_pool2d(self.conv2_drop(x), 2)) # 64, 256, 1, 1
+        x = F.relu(x) # 64, 2000, 1, 1
+        x = self.fc0(x) # 64, 256, 1, 1
+        x = F.relu(x) # 64, 256, 1, 1
         x = x.squeeze() # 64, 256
         x = F.relu(self.fc1(x))
         x = F.dropout(x, training=self.training)
@@ -271,3 +298,22 @@ class BioConvClassifier2(nn.Module):
         # x = self.fc2(x)
         return F.log_softmax(x, dim=-1)
 
+# bio + FCN classifier - FCN with feedback alignment
+class BioFCN_FA_Classifier(nn.Module):
+    def __init__(self, Wᵤᵢ):
+        super().__init__()
+        self.conv1 = BioConvLayer(Wᵤᵢ)
+        self.fc0 = LinearFAModule(2000, 256)
+        self.fc1 = LinearFAModule(256, 1024)
+        self.fc2 = LinearFAModule(1024, 10)
+
+    def forward(self, x):  # 64, 784 
+        x = self.conv1(x)  # 64, 2000, 1, 1
+        x = F.relu(x)  # 64, 2000, 1, 1
+        x = x.view(x.size(0), -1)  # Flatten the output to 2D
+        x = self.fc0(x)  # 64, 256
+        x = F.relu(x)  # 64, 256
+        x = F.relu(self.fc1(x))
+        x = F.dropout(x, training=self.training)
+        x = self.fc2(x)
+        return F.log_softmax(x, dim=-1)
