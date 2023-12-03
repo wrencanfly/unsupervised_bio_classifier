@@ -317,3 +317,23 @@ class BioFCN_FA_Classifier(nn.Module):
         x = F.dropout(x, training=self.training)
         x = self.fc2(x)
         return F.log_softmax(x, dim=-1)
+    
+    
+class BioFCN_without_FA_Classifier(nn.Module):
+    def __init__(self, Wᵤᵢ):
+        super().__init__()
+        self.conv1 = BioConvLayer(Wᵤᵢ)
+        self.fc0 = nn.Linear(2000, 256)
+        self.fc1 = nn.Linear(256, 1024)
+        self.fc2 = nn.Linear(1024, 10)
+
+    def forward(self, x):  # 64, 784 
+        x = self.conv1(x)  # 64, 2000, 1, 1
+        x = F.relu(x)  # 64, 2000, 1, 1
+        x = x.view(x.size(0), -1)  # Flatten the output to 2D
+        x = self.fc0(x)  # 64, 256
+        x = F.relu(x)  # 64, 256
+        x = F.relu(self.fc1(x))
+        x = F.dropout(x, training=self.training)
+        x = self.fc2(x)
+        return F.log_softmax(x, dim=-1)
